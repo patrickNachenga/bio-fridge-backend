@@ -1,0 +1,201 @@
+from django.db import models
+import uuid
+
+from django.contrib.auth.models import AbstractUser, BaseUserManager, PermissionsMixin, Permission
+from django.db.models import F
+
+
+class UserManager(BaseUserManager):
+    def create_user(self, username, password=None, **extra_fields):
+        if not extra_fields.get('pf_number'):
+            raise ValueError('Every New User Must have Valid Registered PF-Number')
+        username = str(username).strip().lower()
+        user = self.model(username=username, **extra_fields)
+        user.set_password(password)
+        user.save(using=self._db)
+        return user
+
+    def create_superuser(self, username, password, **extra_fields):
+        extra_fields.setdefault('is_staff', True)
+        extra_fields.setdefault('is_superuser', True)
+        extra_fields.setdefault('is_active', True)
+        if extra_fields.get('is_active') is not True:
+            raise ValueError('Superuser must have have to be active')
+        if extra_fields.get('is_staff') is not True:
+            raise ValueError('Superuser must have to be staff')
+        if extra_fields.get('is_superuser') is not True:
+            raise ValueError('Superuser must have to be superuser')
+        return self.create_user(username, password, **extra_fields)
+
+
+class User(AbstractUser, PermissionsMixin):
+    ACCOUNT_STATUS_CHOICES = {
+        ('NEW', 'New'),
+        ('ACTIVE', 'Active'),
+        ('SUSPENDED', 'Suspended'),
+        ('RETIRED', 'Retired'),
+    }
+
+    ACCOUNT_TYPE_CHOICES = {
+        ('TEMPORALLY', 'Temporally'),
+        ('LONG_TERM', 'Long Term'),
+        ('SUPER_USER', 'Super User'),
+    }
+
+    # User Columns
+    guid = models.UUIDField(default=uuid.uuid4, editable=False, unique=True)
+    email = models.EmailField(max_length=70, unique=True)
+    pf_number = models.CharField(max_length=50, unique=True)
+    first_name = models.CharField(max_length=80, null=False, blank=False)
+    middle_name = models.CharField(max_length=80, null=True, blank=True)
+    last_name = models.CharField(max_length=80, null=False, blank=False)
+    status = models.CharField(max_length=20, choices=ACCOUNT_STATUS_CHOICES, default='ACTIVE')
+    dob = models.DateField(null=True, blank=True)
+    sex = models.CharField(max_length=10, null=True, blank=True)
+    # Other Personal Details
+    is_active = models.BooleanField(default=False)
+    is_staff = models.BooleanField(default=False)
+    signature = models.TextField(max_length=200, null=True, blank=True)  # a file path
+    photo = models.TextField(max_length=200, null=True, blank=True)  # a file path
+    phone_number = models.TextField(max_length=15, null=True, blank=True)
+    alternative_contact = models.TextField(max_length=15, null=True, blank=True)
+    # default Columns
+    created_at = models.DateTimeField(auto_now_add=True, blank=True, null=True)
+    updated_at = models.DateTimeField(auto_now=True, blank=True, null=True)
+    deleted_at = models.DateTimeField(blank=True, null=True)
+    updated_by = models.IntegerField(null=True, blank=True, default=1)
+    created_by = models.IntegerField(null=True, blank=True, default=1)
+    is_deleted = models.BooleanField(default=False)
+    deleted_by = models.IntegerField(null=True, blank=True, default=1)
+
+
+    objects = UserManager()
+    USERNAME_FIELD = 'username'
+    REQUIRED_FIELDS = ['pf_number', 'first_name', 'last_name']
+
+    def __str__(self):
+        return self.username
+
+    def get_full_name(self):
+        return self.first_name + ' ' + self.middle_name + ' ' + self.last_name
+
+    def get_short_name(self):
+        return self.first_name
+
+    def has_perm(self, perm, obj=None):
+        return True
+
+    def has_module_perms(self, app_label):
+        return True
+
+    def get_groups(self):
+        return []
+
+    def get_group_names(self):
+        """Returns a list of group names the user belongs to."""
+        return list(self.groups.values_list('name', flat=True))
+
+    def get_permission_codes(self):
+        """Returns a list of permission codes assigned to the user."""
+        permissions = set(self.user_permissions.values_list('codename', flat=True))
+        group_permissions = set(Permission.objects.filter(group__user=self).values_list('codename', flat=True))
+        return list(permissions.union(group_permissions))
+
+    def save(self, *args, **kwargs):
+        if self.is_superuser:
+            self.account_type = 'SUPER_USER'
+        super().save(*args, **kwargs)
+
+    class Meta:
+        db_table = 'auth_user'
+
+
+class BaseModel(models.Model):
+    id = models.BigAutoField(primary_key=True)
+    uid = models.UUIDField(default=uuid.uuid4, editable=False, unique=True)
+    created_at = models.DateTimeField(auto_now_add=True, blank=True, null=True)
+    updated_at = models.DateTimeField(auto_now=True, blank=True, null=True)
+    deleted_at = models.DateTimeField(blank=True, null=True)
+    is_deleted = models.BooleanField(default=False)
+    created_by = models.ForeignKey(User, related_name='created_%(class)s', on_delete=models.SET_NULL, null=True,
+                                   blank=True)
+    updated_by = models.ForeignKey(User, related_name='updated_%(class)s', on_delete=models.SET_NULL, null=True,
+                                   blank=True)
+    deleted_by = models.ForeignKey(User, related_name='deleted_%(class)s', on_delete=models.SET_NULL, null=True,
+                                   blank=True)
+
+    class Meta:
+        abstract = True
+
+
+class Directory(BaseModel):
+    name = models.CharField(max_length=100, null=True)
+    code = models.CharField(max_length=20, null=True)
+    description = models.TextField(blank=True, null=True)
+
+    class Meta:
+        db_table = 'directories'
+        ordering = ['name', 'code']
+        verbose_name = "Directory"
+        verbose_name_plural = "Directories"
+        indexes = [
+            models.Index(fields=['name', 'code']),
+            models.Index(fields=['uid']),
+        ]
+
+    def __str__(self):
+        return f"{self.name} ({self.code})"
+
+class Department(BaseModel):
+    name = models.CharField(max_length=100, null=True)
+    code = models.CharField(max_length=20, null=True)
+    directory = models.ForeignKey('Directory', on_delete=models.CASCADE, related_name='departments')
+
+    description = models.TextField(blank=True, null=True)
+    is_active = models.BooleanField(default=True)
+
+    class Meta:
+        db_table = 'departments'
+        ordering = ['name']
+        verbose_name = "Department"
+        verbose_name_plural = "Departments"
+        indexes = [
+            models.Index(fields=['name', 'code']),  # Optimized query performance
+            models.Index(fields=['is_active']),  # Faster queries on active departments
+        ]
+
+    def __str__(self):
+        return f"{self.name} ({self.code})"
+
+class PositionalLevel(BaseModel):
+    """Defines different levels of approval (e.g., Supervisor, Manager, Director)"""
+    name = models.CharField(max_length=100, null=True)
+    code = models.CharField(max_length=20, null=True)
+    is_active = models.BooleanField(default=True)
+
+
+    class Meta:
+        db_table = 'positional_levels'
+
+    def __str__(self):
+        return self.name
+
+class UserProfile(BaseModel):
+    uid = models.UUIDField(default=uuid.uuid4, editable=False, unique=True)
+    user = models.ForeignKey(User, related_name='user_profiles', on_delete=models.SET_NULL, null=True, blank=True)
+    level = models.ForeignKey(PositionalLevel, on_delete=models.CASCADE)
+    directory = models.ForeignKey('Directory', on_delete=models.CASCADE, related_name='user_profiles')
+
+    department = models.ForeignKey('Department', models.DO_NOTHING, blank=True, null=True, default=None)
+    is_active = models.BooleanField(default=True, null=False, blank=False)
+    end_date = models.DateTimeField(blank=True, null=True)
+    description = models.TextField(blank=True, null=True)  # Optional explanation
+
+
+    class Meta:
+        db_table = 'user_profile'
+
+    def __str__(self):
+        return f"{self.user.get_full_name()} ({self.level.code})"
+
+
