@@ -204,3 +204,7 @@ class StorageSample(BaseModel):
 
     class Meta:
         db_table = 'storage_samples'
+
+
+
+        
